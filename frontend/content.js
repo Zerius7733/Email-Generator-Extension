@@ -63,8 +63,37 @@ function collectKeyDetails() {
   return details;
 }
 
+function normalizeCompanyText(value) {
+  return (value || "").replace(/\s+/g, " ").trim();
+}
+
+function inferCompanyFromAgencyLinks() {
+  const links = Array.from(document.querySelectorAll('a[href*="/agency/"]'));
+  for (const link of links) {
+    const text = normalizeCompanyText(link.textContent || "");
+    if (text && text.length <= 120) {
+      return text;
+    }
+  }
+  return "";
+}
+
+function inferCompanyFromLabeledText() {
+  const candidates = Array.from(document.querySelectorAll("p, li, dt, dd, span, div"));
+  for (const node of candidates) {
+    const text = normalizeCompanyText(node.textContent || "");
+    const match = text.match(/^(?:company|employer|organisation|organization)\s*:?\s*(.+)$/i);
+    if (match?.[1]) {
+      return normalizeCompanyText(match[1]);
+    }
+  }
+  return "";
+}
+
 function inferCompany() {
   return (
+    inferCompanyFromAgencyLinks() ||
+    inferCompanyFromLabeledText() ||
     textFromSelectors([
       '[data-testid*="company"]',
       '[class*="company"]',
