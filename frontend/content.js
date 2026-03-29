@@ -85,9 +85,52 @@ function inferLocation() {
   );
 }
 
+function extractEmailFromMailtoHref(href) {
+  if (!href || !href.toLowerCase().startsWith("mailto:")) {
+    return "";
+  }
+
+  const emailPart = href.slice("mailto:".length).split("?")[0].trim();
+  return /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(emailPart) ? emailPart : "";
+}
+
+function inferEmailFromMailtoLinks() {
+  const links = Array.from(document.querySelectorAll('a[href^="mailto:"]'));
+  for (const link of links) {
+    const href = link.getAttribute("href") || "";
+    const email = extractEmailFromMailtoHref(href);
+    if (email) {
+      return email;
+    }
+
+    const textEmail = (link.textContent || "").trim();
+    if (/^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(textEmail)) {
+      return textEmail;
+    }
+  }
+  return "";
+}
+
+function inferObfuscatedEmail(bodyText) {
+  const match = bodyText.match(/([A-Z0-9._%+-]+)\s*(?:\[at\]|\(at\)| at )\s*([A-Z0-9.-]+\.[A-Z]{2,})/i);
+  if (!match) {
+    return "";
+  }
+  return `${match[1]}@${match[2]}`;
+}
+
 function inferRecruiterEmail(bodyText) {
-  const match = bodyText.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-  return match ? match[0] : "";
+  const mailtoEmail = inferEmailFromMailtoLinks();
+  if (mailtoEmail) {
+    return mailtoEmail;
+  }
+
+  const directMatch = bodyText.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  if (directMatch) {
+    return directMatch[0];
+  }
+
+  return inferObfuscatedEmail(bodyText);
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

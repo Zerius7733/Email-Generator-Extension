@@ -32,6 +32,10 @@ function setStatus(message, isError = false) {
   statusEl.style.color = isError ? "#991b1b" : "#655c51";
 }
 
+function normalizeBackendUrl(value) {
+  return (value || DEFAULT_SETTINGS.backendUrl).replace(/\/+$/, "");
+}
+
 async function loadSettings() {
   const stored = await getFromStorage([
     STORAGE_KEYS.settings,
@@ -74,15 +78,60 @@ async function saveSettings() {
   setStatus("Settings saved.");
 }
 
+async function importProfileFile(file) {
+  const stored = await getFromStorage([STORAGE_KEYS.settings]);
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    ...(stored[STORAGE_KEYS.settings] || {})
+  };
+
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+
+  const response = await fetch(`${normalizeBackendUrl(settings.backendUrl)}/extract-profile-file`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      fileName: file.name,
+      mimeType: file.type,
+      base64: btoa(binary)
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Profile import failed: ${response.status} ${errorText}`);
+  }
+
+  const payload = await response.json();
+  if (!payload?.ok) {
+    throw new Error(payload?.error || "Profile import failed.");
+  }
+
+  fields.profileText.value = payload.text || "";
+  const warningText = payload.warnings?.length ? ` Warnings: ${payload.warnings.join(" ")}` : "";
+  setStatus(`Loaded ${file.name} as ${payload.fileType}.${warningText}`);
+}
+
 importFileEl.addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
   if (!file) {
     return;
   }
 
-  const text = await file.text();
-  fields.profileText.value = text;
-  setStatus(`Loaded ${file.name} into the knowledge base editor.`);
+  try {
+    await importProfileFile(file);
+  } catch (error) {
+    setStatus(error.message, true);
+  }
 });
 
 saveBtn.addEventListener("click", async () => {

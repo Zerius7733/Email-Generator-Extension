@@ -108,6 +108,12 @@ button:hover {
   filter: brightness(0.98);
 }
 
+.apply-action {
+  background: #7c2d12;
+  border-color: #7c2d12;
+  color: #fff;
+}
+
 .field {
   display: grid;
   gap: 6px;
@@ -137,10 +143,6 @@ textarea {
   border: 1px solid var(--line);
   padding: 10px 12px;
   background: #fff;
-}
-
-input[readonly] {
-  color: var(--muted);
 }
 
 textarea {

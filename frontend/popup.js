@@ -8,6 +8,7 @@ import {
 
 const captureBtn = document.getElementById("captureBtn");
 const generateBtn = document.getElementById("generateBtn");
+const applyBtn = document.getElementById("applyBtn");
 const statusEl = document.getElementById("status");
 const captureMetaEl = document.getElementById("captureMeta");
 const previewEl = document.getElementById("preview");
@@ -142,6 +143,14 @@ async function captureCurrentTab() {
 }
 
 async function generateDraft() {
+  subjectEl.value = "";
+  bodyEl.value = "";
+  rationaleEl.textContent = "";
+
+  const storedBeforeReset = await getFromStorage([STORAGE_KEYS.lastCapture]);
+  recipientEmailEl.value = displayEmail(storedBeforeReset[STORAGE_KEYS.lastCapture]?.recruiterEmail);
+  await persistPopupState();
+
   setStatus("Sending job details to backend...");
 
   const stored = await getFromStorage([
@@ -215,6 +224,50 @@ async function generateDraft() {
   setStatus(`Draft generated via ${payload.provider}.`);
 }
 
+async function applyApplication() {
+  const stored = await getFromStorage([
+    STORAGE_KEYS.settings,
+    STORAGE_KEYS.lastCapture
+  ]);
+
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    ...(stored[STORAGE_KEYS.settings] || {})
+  };
+  const capture = stored[STORAGE_KEYS.lastCapture];
+
+  if (!capture) {
+    throw new Error("Capture a job page first.");
+  }
+
+  setStatus("Writing application to applications.csv...");
+
+  const response = await fetch(`${normalizeBackendUrl(settings.backendUrl)}/log-application`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      capture,
+      recipientEmail: normalizedRecipientValue(),
+      status: "Pending"
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Apply request failed: ${response.status} ${errorText}`);
+  }
+
+  const payload = await response.json();
+  if (!payload?.ok) {
+    throw new Error(payload?.error || "Could not append to applications.csv.");
+  }
+
+  await persistPopupState();
+  setStatus(`Saved to applications.csv for ${payload.row.Company}.`);
+}
+
 async function copyValue(value, label) {
   await navigator.clipboard.writeText(value);
   setStatus(`${label} copied.`);
@@ -231,6 +284,14 @@ captureBtn.addEventListener("click", async () => {
 generateBtn.addEventListener("click", async () => {
   try {
     await generateDraft();
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+});
+
+applyBtn.addEventListener("click", async () => {
+  try {
+    await applyApplication();
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -277,3 +338,4 @@ window.addEventListener("beforeunload", () => {
 });
 
 loadState();
+
