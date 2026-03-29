@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Job Email Draft Generator",
+  "version": "0.1.0",
+  "description": "Capture job pages, extract details, retrieve resume context, and draft tailored application emails.",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "frontend/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Job Email Draft Generator",
+    "default_popup": "frontend/popup.html"
+  },
+  "options_page": "frontend/options.html",
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "frontend/content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

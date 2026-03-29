@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Job Email Draft Generator</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="panel hero">
+        <p class="eyebrow">Job Capture</p>
+        <h1>Draft a targeted application email</h1>
+        <p class="subtle">
+          Capture the current page, retrieve the best matching profile context, and send structured job details to the LLM.
+        </p>
+        <div class="actions">
+          <button id="captureBtn" class="primary">Capture Current Tab</button>
+          <button id="generateBtn">Generate Draft</button>
+        </div>
+        <p id="status" class="status"></p>
+      </section>
+
+      <section class="panel">
+        <div class="section-title">
+          <h2>Latest capture</h2>
+          <a href="options.html" target="_blank" rel="noreferrer">Options</a>
+        </div>
+        <div id="captureMeta" class="meta empty">No page captured yet.</div>
+        <img id="preview" class="preview hidden" alt="Captured page preview">
+      </section>
+
+      <section class="panel">
+        <div class="section-title">
+          <h2>Generated email</h2>
+          <div class="actions compact">
+            <button id="gmailBtn">Open Gmail</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="field-header">
+            <span>Email</span>
+            <button id="copyEmailBtn" class="copy-field" type="button">Copy</button>
+          </div>
+          <input id="recipientEmail" type="text" value="NA" placeholder="Enter recipient email or leave blank">
+        </div>
+
+        <div class="field">
+          <div class="field-header">
+            <span>Subject</span>
+            <button id="copySubjectBtn" class="copy-field" type="button">Copy</button>
+          </div>
+          <input id="subject" type="text" placeholder="Generated subject appears here">
+        </div>
+
+        <div class="field">
+          <div class="field-header">
+            <span>Body</span>
+            <button id="copyBodyBtn" class="copy-field" type="button">Copy</button>
+          </div>
+          <textarea id="body" rows="14" placeholder="Generated email body appears here"></textarea>
+        </div>
+
+        <p id="rationale" class="subtle"></p>
+      </section>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

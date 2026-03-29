@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Job Email Draft Generator Settings</title>
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="panel">
+        <p class="eyebrow">Configuration</p>
+        <h1>Resume-aware email drafting</h1>
+        <p class="subtle">
+          Store your local backend settings and the profile text that should act as the retrieval knowledge base.
+        </p>
+      </section>
+
+      <section class="panel grid">
+        <label class="field">
+          <span>Applicant name</span>
+          <input id="applicantName" type="text">
+        </label>
+        <label class="field">
+          <span>Applicant email</span>
+          <input id="applicantEmail" type="email">
+        </label>
+        <label class="field">
+          <span>Default recipient email</span>
+          <input id="targetEmail" type="email" placeholder="Optional recruiter or hiring email">
+        </label>
+        <label class="field">
+          <span>Tone</span>
+          <input id="tone" type="text" placeholder="professional and concise">
+        </label>
+        <label class="field">
+          <span>Backend URL</span>
+          <input id="backendUrl" type="url" placeholder="http://127.0.0.1:8787">
+        </label>
+        <label class="field">
+          <span>Provider</span>
+          <select id="provider">
+            <option value="openai">OpenAI</option>
+            <option value="ollama">Ollama</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Model override</span>
+          <input id="model" type="text" placeholder="Leave blank to use backend default">
+        </label>
+        <label class="field">
+          <span>Max retrieved profile chunks</span>
+          <input id="maxProfileChunks" type="number" min="1" max="8">
+        </label>
+      </section>
+
+      <section class="panel">
+        <div class="section-title">
+          <h2>Resume or profile knowledge base</h2>
+          <input id="importFile" type="file" accept=".txt,.md,.json">
+        </div>
+        <textarea id="profileText" rows="22" placeholder="Paste your resume text, cover letter notes, and project highlights here."></textarea>
+        <div class="actions">
+          <button id="resetBtn">Restore bundled profile</button>
+          <button id="saveBtn" class="primary">Save settings</button>
+        </div>
+        <p id="status" class="subtle"></p>
+      </section>
+    </main>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>
