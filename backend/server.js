@@ -16,7 +16,8 @@ const env = {
   openAiModel: process.env.OPENAI_MODEL || "gpt-4.1-mini",
   ollamaBaseUrl: trimTrailingSlash(process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434"),
   ollamaModel: process.env.OLLAMA_MODEL || "llama3.1:8b",
-  applicationsCsvPath: path.resolve(__dirname, "..", "applications.csv")
+  applicationsCsvPath: path.resolve(__dirname, "..", "applications.csv"),
+  providerTimeoutMs: Number(process.env.PROVIDER_TIMEOUT_MS || 30000)
 };
 
 const server = http.createServer(async (req, res) => {
@@ -80,6 +81,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/draft-email") {
     try {
+      const requestStartedAt = Date.now();
       const body = await readJson(req);
       const capture = body.capture || {};
       const profileText = typeof body.profileText === "string" ? body.profileText : "";
@@ -97,21 +99,37 @@ const server = http.createServer(async (req, res) => {
         limit: Number(settings.maxProfileChunks) || 4
       });
 
+      const promptStartedAt = Date.now();
       const prompt = buildDraftPrompt({
         capture,
         retrievedProfile,
-        settings
+        settings: {
+          ...settings,
+          fullProfileText: profileText
+        }
       });
+      const promptBuildMs = Date.now() - promptStartedAt;
 
+      const providerStartedAt = Date.now();
       const result = await generateDraft({
         provider,
         prompt,
         modelOverride: settings.model
       });
+      const providerMs = Date.now() - providerStartedAt;
+      const draft = ensureProductionLinkInDraft({
+        draft: result,
+        capture,
+        settings
+      });
+
+      console.log(
+        `[draft-email] provider=${provider} model=${result.model} promptChars=${prompt.length} retrievedChunks=${retrievedProfile.length} promptBuildMs=${promptBuildMs} providerMs=${providerMs} totalMs=${Date.now() - requestStartedAt}`
+      );
 
       sendJson(res, 200, {
         ok: true,
-        draft: result,
+        draft,
         provider,
         retrievedProfile
       });
@@ -273,26 +291,81 @@ function buildDraftPrompt({ capture, retrievedProfile, settings }) {
     url: capture.url || "",
     pageTitle: capture.pageTitle || "",
     summary: capture.summary || "",
-    keyDetails: capture.keyDetails || [],
-    extractedText: capture.extractedText || ""
+    keyDetails: Array.isArray(capture.keyDetails) ? capture.keyDetails.slice(0, 10) : []
   };
+
+  const relevantProfileText = trimText(settings.fullProfileText || "", 2200);
 
   return [
     "Write a targeted job application email draft.",
     "Use only the facts from the job details and resume context below.",
     "Do not invent projects, metrics, or skills.",
-    "Keep the tone professional, specific, and concise.",
+    "Keep the tone professional, warm, specific, and concise.",
+    "The email should sound like a real candidate wrote it, not a generic template.",
+    "Prefer this paragraph structure:",
+    "1. Greeting and one short opening paragraph stating interest in the role and company.",
+    "2. One concrete project paragraph focused on the strongest relevant project or hackathon work.",
+    "3. One paragraph on technical experience gained from those projects, such as backend systems, APIs, deployment, data workflows, or full-stack implementation.",
+    "4. One short paragraph explaining why that experience makes the applicant a good fit for the role.",
+    "5. One brief closing paragraph mentioning the resume and openness to discuss further.",
+    "Prioritize concrete project experience over broad lists of coursework, tools, or generic strengths unless the job explicitly asks for them.",
+    "Mention only projects, technical work, and experience that are directly relevant to the role.",
+    "For each project or experience mentioned, make the relevance clear by connecting it to the job's responsibilities, domain, or required skills.",
+    "Do not mention CCAs, student clubs, leadership activities, volunteering, sports, or unrelated extracurriculars unless the job details explicitly ask for them.",
+    "Do not include filler achievements or background details that do not strengthen role fit.",
+    "Avoid stiff phrases such as 'Beyond coursework' or long laundry lists of technologies unless needed for role fit.",
+    "Prefer short, readable paragraphs instead of dense blocks.",
+    "Prefer one standout project over listing many smaller projects.",
+    "If a relevant deployed project exists, mention that it is live in production and place the link on its own line immediately after the sentence introducing the project.",
+    "If helpful and factual, a short parenthetical note after the link may suggest how to access or test the platform.",
+    "When a live product, deployed app, portfolio, or project link would strengthen the email, integrate the applicant production link naturally into the same paragraph as the project mention instead of adding a detached standalone sentence.",
+    "If the job details explicitly ask for a live app, production URL, portfolio, or project link in the response email, make sure the applicant production link is included naturally in the body.",
+    "Use a natural salutation like 'Dear <name>,' when a person is known, otherwise use the captured recruiter/team reference if available.",
+    "Use sign-offs like 'Yours sincerely,' or 'Best regards,' based on the overall tone.",
+    "Do not include the applicant email address in the sign-off or anywhere in the email body unless the job instructions explicitly require it.",
+    "Style example to emulate:",
+    "Dear [Name],",
+    "",
+    "I am writing to express my interest in the [Role] role at [Company]. I am currently a [Year/Discipline] student at [University], with experience building and deploying end-to-end applications.",
+    "",
+    "Recently, I worked on [Project], where [brief achievement or context]. We developed and deployed [Project], a platform that [brief description]:",
+    "[Link]",
+    "",
+    "(Optional short access note if factual.)",
+    "",
+    "Through my projects, I have gained hands-on experience with [relevant systems or skills]. I am comfortable building practical application logic, integrating external systems, and shipping solutions that can be deployed and iterated on in real-world environments.",
+    "",
+    "I am particularly interested in this role because [specific role fit]. I am keen to contribute by [specific contribution areas].",
+    "",
+    "I have attached my resume for your consideration. I believe my experience may be a good fit for this role, and I would welcome the opportunity to discuss how I can contribute further.",
+    "",
+    "Yours sincerely,",
+    "[Applicant Name]",
     "Return strict JSON with keys: subject, body, rationale.",
-    `Tone: ${settings.tone || "professional and concise"}`,
+    `Tone: ${settings.tone || "formal, natural, project-focused, and concise"}`,
     `Applicant name: ${settings.applicantName || "Applicant"}`,
     `Applicant email: ${settings.applicantEmail || "not provided"}`,
+    `Applicant production project name: ${settings.productionProjectName || "not provided"}`,
+    `Applicant production link: ${settings.productionLink || "not provided"}`,
+    "If both a production project name and production link are provided, treat the link as belonging to that project and refer to them together naturally in the email.",
     "",
     "Job details JSON:",
     JSON.stringify(structuredJob, null, 2),
     "",
     "Most relevant resume/profile context:",
-    retrievedProfile.join("\n\n---\n\n")
+    retrievedProfile.join("\n\n---\n\n"),
+    "",
+    "Additional resume/profile context:",
+    relevantProfileText
   ].join("\n");
+}
+
+function trimText(text, maxChars) {
+  const normalized = normalizeWhitespace(text);
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
 }
 
 function normalizeProvider(provider) {
@@ -301,6 +374,73 @@ function normalizeProvider(provider) {
     return "ollama";
   }
   return "openai";
+}
+
+function ensureProductionLinkInDraft({ draft, capture, settings }) {
+  const productionLink = normalizeWhitespace(settings.productionLink || "");
+  const productionProjectName = normalizeWhitespace(settings.productionProjectName || "");
+  if (!productionLink) {
+    return draft;
+  }
+
+  const body = String(draft?.body || "");
+  if (body.includes(productionLink)) {
+    return draft;
+  }
+
+  const requirementText = [
+    capture?.summary || "",
+    ...(Array.isArray(capture?.keyDetails) ? capture.keyDetails : []),
+    capture?.extractedText || ""
+  ]
+    .join("\n")
+    .toLowerCase();
+
+  const asksForLink = /(portfolio|project link|project links|github|live app|deployed|production link|website|response email)/i.test(
+    requirementText
+  );
+
+  const linkedProject = productionProjectName
+    ? `${productionProjectName}, which can be viewed here: ${productionLink}`
+    : `one of my live projects, which can be viewed here: ${productionLink}`;
+
+  const addition = asksForLink
+    ? `I am also including ${linkedProject} to address the link request in the application instructions.`
+    : `I have also worked on ${linkedProject}.`;
+
+  return {
+    ...draft,
+    body: insertBeforeSignoff(body, addition),
+    rationale: appendRationale(draft?.rationale, asksForLink, productionProjectName)
+  };
+}
+
+function insertBeforeSignoff(body, addition) {
+  const normalizedBody = String(body || "").trim();
+  if (!normalizedBody) {
+    return addition;
+  }
+
+  const signoffMatch = normalizedBody.match(/\n(?:Thank you[^\n]*|Best regards,|Regards,|Sincerely,)[\s\S]*$/i);
+  if (!signoffMatch || typeof signoffMatch.index !== "number") {
+    return `${normalizedBody}\n\n${addition}`;
+  }
+
+  const before = normalizedBody.slice(0, signoffMatch.index).trimEnd();
+  const after = normalizedBody.slice(signoffMatch.index).trimStart();
+  return `${before}\n\n${addition}\n\n${after}`;
+}
+
+function appendRationale(rationale, matchedRequirement, productionProjectName) {
+  const base = String(rationale || "").trim();
+  const projectReference = productionProjectName
+    ? `Linked the production URL to ${productionProjectName}.`
+    : "Included the configured production link as a live project reference.";
+  const addition = matchedRequirement
+    ? `${projectReference} Included the production link because the captured job details appear to request a link or portfolio in the response.`
+    : projectReference;
+
+  return base ? `${base} ${addition}` : addition;
 }
 
 async function extractProfileFile(body) {
@@ -421,17 +561,22 @@ async function generateWithOpenAi({ prompt, modelOverride }) {
     throw new Error("OPENAI_API_KEY is not configured in backend/.env.");
   }
 
-  const response = await fetch(env.openAiApiUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${env.openAiApiKey}`
+  const response = await fetchWithTimeout(
+    env.openAiApiUrl,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${env.openAiApiKey}`
+      },
+      body: JSON.stringify({
+        model: modelOverride || env.openAiModel,
+        input: prompt
+      })
     },
-    body: JSON.stringify({
-      model: modelOverride || env.openAiModel,
-      input: prompt
-    })
-  });
+    env.providerTimeoutMs,
+    "OpenAI"
+  );
 
   if (!response.ok) {
     const text = await response.text();
@@ -448,18 +593,23 @@ async function generateWithOpenAi({ prompt, modelOverride }) {
 }
 
 async function generateWithOllama({ prompt, modelOverride }) {
-  const response = await fetch(`${env.ollamaBaseUrl}/api/generate`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
+  const response = await fetchWithTimeout(
+    `${env.ollamaBaseUrl}/api/generate`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: modelOverride || env.ollamaModel,
+        prompt,
+        stream: false,
+        format: "json"
+      })
     },
-    body: JSON.stringify({
-      model: modelOverride || env.ollamaModel,
-      prompt,
-      stream: false,
-      format: "json"
-    })
-  });
+    env.providerTimeoutMs,
+    "Ollama"
+  );
 
   if (!response.ok) {
     const text = await response.text();
@@ -488,6 +638,25 @@ function parseDraftJson(outputText, modelUsed) {
     rationale: normalizeWhitespace(parsed.rationale || ""),
     model: modelUsed
   };
+}
+
+async function fetchWithTimeout(url, options, timeoutMs, providerName) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`${providerName} request timed out after ${Math.round(timeoutMs / 1000)} seconds.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 

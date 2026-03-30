@@ -1,5 +1,7 @@
 import {
   STORAGE_KEYS,
+  STALE_DRAFT_JOB_MS,
+  BACKEND_HEALTH_TIMEOUT_MS,
   DEFAULT_SETTINGS,
   buildGmailComposeUrl,
   getFromStorage,
@@ -8,6 +10,7 @@ import {
 
 const captureBtn = document.getElementById("captureBtn");
 const generateBtn = document.getElementById("generateBtn");
+const resetBtn = document.getElementById("resetBtn");
 const applyBtn = document.getElementById("applyBtn");
 const statusEl = document.getElementById("status");
 const captureMetaEl = document.getElementById("captureMeta");
@@ -22,6 +25,7 @@ const copyBodyBtn = document.getElementById("copyBodyBtn");
 const gmailBtn = document.getElementById("gmailBtn");
 
 let saveTimer = null;
+let storageListenerAttached = false;
 
 function setStatus(message, isError = false) {
   statusEl.textContent = message;
@@ -45,6 +49,25 @@ function normalizeBackendUrl(value) {
   return (value || DEFAULT_SETTINGS.backendUrl).replace(/\/+$/, "");
 }
 
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("Backend health check timed out.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function getPopupState() {
   return {
     recipientEmail: recipientEmailEl.value,
@@ -52,6 +75,40 @@ function getPopupState() {
     body: bodyEl.value,
     rationale: rationaleEl.textContent || ""
   };
+}
+
+function renderDraft(draft, recipientEmail) {
+  subjectEl.value = draft?.subject || "";
+  bodyEl.value = draft?.body || "";
+  rationaleEl.textContent = draft?.rationale || "";
+
+  if (recipientEmail) {
+    recipientEmailEl.value = recipientEmail;
+  }
+}
+
+function updateStatusFromDraftJob(draftJob) {
+  if (!draftJob) {
+    return;
+  }
+
+  if (draftJob.status === "running") {
+    if (draftJob.startedAt && Date.now() - Date.parse(draftJob.startedAt) > STALE_DRAFT_JOB_MS) {
+      setStatus("The previous draft job appears stuck. Generate again.", true);
+      return;
+    }
+    setStatus("Generating draft in background...");
+    return;
+  }
+
+  if (draftJob.status === "completed") {
+    setStatus(`Draft generated via ${draftJob.provider || "provider"}.`);
+    return;
+  }
+
+  if (draftJob.status === "error") {
+    setStatus(draftJob.error || "Draft generation failed.", true);
+  }
 }
 
 async function persistPopupState() {
@@ -99,29 +156,74 @@ async function loadState() {
   const stored = await getFromStorage([
     STORAGE_KEYS.lastCapture,
     STORAGE_KEYS.lastDraft,
-    STORAGE_KEYS.popupState
+    STORAGE_KEYS.popupState,
+    STORAGE_KEYS.draftJob
   ]);
 
   const popupState = stored[STORAGE_KEYS.popupState] || null;
   renderCapture(stored[STORAGE_KEYS.lastCapture], popupState);
 
+  updateStatusFromDraftJob(stored[STORAGE_KEYS.draftJob]);
+
+  if (stored[STORAGE_KEYS.draftJob]?.status === "running") {
+    const backendReachable = await isBackendReachable();
+    if (!backendReachable) {
+      await resetDraftJobOnly("Backend is not connected. Draft generation was reset. Start the backend and try again.");
+    }
+  }
+
   if (popupState) {
-    subjectEl.value = popupState.subject || "";
-    bodyEl.value = popupState.body || "";
-    rationaleEl.textContent = popupState.rationale || "";
+    renderDraft(popupState, popupState.recipientEmail);
     return;
   }
 
   const draft = stored[STORAGE_KEYS.lastDraft];
   if (draft) {
-    subjectEl.value = draft.subject || "";
-    bodyEl.value = draft.body || "";
-    rationaleEl.textContent = draft.rationale || "";
+    renderDraft(draft, draft.recipientEmail);
   } else {
-    subjectEl.value = "";
-    bodyEl.value = "";
-    rationaleEl.textContent = "";
+    renderDraft(null, "");
   }
+}
+
+function resetRenderedState() {
+  renderCapture(null, null);
+  renderDraft(null, "");
+}
+
+function clearRenderedDraftOnly() {
+  renderDraft(null, recipientEmailEl.value);
+}
+
+async function isBackendReachable() {
+  const stored = await getFromStorage([STORAGE_KEYS.settings]);
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    ...(stored[STORAGE_KEYS.settings] || {})
+  };
+
+  try {
+    const response = await fetchWithTimeout(
+      `${normalizeBackendUrl(settings.backendUrl)}/health`,
+      { method: "GET" },
+      BACKEND_HEALTH_TIMEOUT_MS
+    );
+    return response.ok;
+  } catch (_error) {
+    return false;
+  }
+}
+
+async function resetDraftJobOnly(message) {
+  const result = await chrome.runtime.sendMessage({
+    type: "reset-draft-job-state"
+  });
+
+  if (!result?.ok) {
+    throw new Error(result?.error || "Could not reset draft state.");
+  }
+
+  clearRenderedDraftOnly();
+  setStatus(message, true);
 }
 
 async function captureCurrentTab() {
@@ -143,85 +245,49 @@ async function captureCurrentTab() {
 }
 
 async function generateDraft() {
-  subjectEl.value = "";
-  bodyEl.value = "";
-  rationaleEl.textContent = "";
-
   const storedBeforeReset = await getFromStorage([STORAGE_KEYS.lastCapture]);
   recipientEmailEl.value = displayEmail(storedBeforeReset[STORAGE_KEYS.lastCapture]?.recruiterEmail);
+
+  const backendReachable = await isBackendReachable();
+  if (!backendReachable) {
+    await resetDraftJobOnly("Backend is not connected. Draft generation was reset. Start the backend and try again.");
+    return;
+  }
+
+  renderDraft(null, recipientEmailEl.value);
   await persistPopupState();
 
-  setStatus("Sending job details to backend...");
+  setStatus("Starting background draft generation...");
 
-  const stored = await getFromStorage([
-    STORAGE_KEYS.settings,
-    STORAGE_KEYS.profileText,
-    STORAGE_KEYS.lastCapture
-  ]);
-
-  const settings = {
-    ...DEFAULT_SETTINGS,
-    ...(stored[STORAGE_KEYS.settings] || {})
-  };
-  const profileText = stored[STORAGE_KEYS.profileText] || "";
-  const capture = stored[STORAGE_KEYS.lastCapture];
-
-  if (!capture) {
-    throw new Error("Capture a job page first.");
-  }
-
-  if (!profileText.trim()) {
-    throw new Error("Add your resume or profile text in Options before generating.");
-  }
-
-  const response = await fetch(`${normalizeBackendUrl(settings.backendUrl)}/draft-email`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      provider: settings.provider,
-      capture,
-      profileText,
-      settings: {
-        applicantName: settings.applicantName,
-        applicantEmail: settings.applicantEmail,
-        tone: settings.tone,
-        model: settings.model,
-        maxProfileChunks: settings.maxProfileChunks
-      }
-    })
+  const result = await chrome.runtime.sendMessage({
+    type: "start-draft-generation"
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Backend request failed: ${response.status} ${errorText}`);
+  if (!result?.ok) {
+    throw new Error(result?.error || "Could not start draft generation.");
   }
 
-  const payload = await response.json();
-  if (!payload?.ok || !payload?.draft) {
-    throw new Error(payload?.error || "Backend did not return a draft.");
+  if (result.alreadyRunning) {
+    setStatus("Draft generation is already running in the background.");
+    return;
   }
 
-  const draft = payload.draft;
-  subjectEl.value = draft.subject || "";
-  bodyEl.value = draft.body || "";
-  rationaleEl.textContent = draft.rationale || "";
+  setStatus("Generating draft in background...");
+}
 
-  if (!normalizedRecipientValue()) {
-    recipientEmailEl.value = displayEmail(capture.recruiterEmail);
-  }
+async function resetDraftSession() {
+  setStatus("Resetting captured and generated draft state...");
 
-  await setInStorage({
-    [STORAGE_KEYS.lastDraft]: {
-      ...draft,
-      recipientEmail: recipientEmailEl.value,
-      provider: payload.provider
-    },
-    [STORAGE_KEYS.popupState]: getPopupState()
+  const result = await chrome.runtime.sendMessage({
+    type: "reset-draft-session"
   });
 
-  setStatus(`Draft generated via ${payload.provider}.`);
+  if (!result?.ok) {
+    throw new Error(result?.error || "Could not reset draft state.");
+  }
+
+  resetRenderedState();
+  setStatus("Draft session reset.");
 }
 
 async function applyApplication() {
@@ -289,6 +355,14 @@ generateBtn.addEventListener("click", async () => {
   }
 });
 
+resetBtn.addEventListener("click", async () => {
+  try {
+    await resetDraftSession();
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+});
+
 applyBtn.addEventListener("click", async () => {
   try {
     await applyApplication();
@@ -332,6 +406,24 @@ gmailBtn.addEventListener("click", async () => {
 recipientEmailEl.addEventListener("input", schedulePopupStateSave);
 subjectEl.addEventListener("input", schedulePopupStateSave);
 bodyEl.addEventListener("input", schedulePopupStateSave);
+
+if (!storageListenerAttached && globalThis.chrome?.storage?.onChanged) {
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "local") {
+      return;
+    }
+
+    if (changes[STORAGE_KEYS.popupState]?.newValue) {
+      const popupState = changes[STORAGE_KEYS.popupState].newValue;
+      renderDraft(popupState, popupState.recipientEmail);
+    }
+
+    if (changes[STORAGE_KEYS.draftJob]?.newValue) {
+      updateStatusFromDraftJob(changes[STORAGE_KEYS.draftJob].newValue);
+    }
+  });
+  storageListenerAttached = true;
+}
 
 window.addEventListener("beforeunload", () => {
   clearTimeout(saveTimer);

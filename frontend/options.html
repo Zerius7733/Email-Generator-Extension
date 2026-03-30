@@ -26,12 +26,20 @@
           <input id="applicantEmail" type="email">
         </label>
         <label class="field">
+          <span>Production project name</span>
+          <input id="productionProjectName" type="text" placeholder="e.g. UNOVA">
+        </label>
+        <label class="field">
+          <span>Production link</span>
+          <input id="productionLink" type="url" placeholder="Live app, portfolio, or deployed project URL">
+        </label>
+        <label class="field">
           <span>Default recipient email</span>
           <input id="targetEmail" type="email" placeholder="Optional recruiter or hiring email">
         </label>
         <label class="field">
           <span>Tone</span>
-          <input id="tone" type="text" placeholder="professional and concise">
+          <input id="tone" type="text" placeholder="formal, natural, project-focused, and concise">
         </label>
         <label class="field">
           <span>Backend URL</span>
@@ -45,7 +53,11 @@
           </select>
         </label>
         <label class="field">
-          <span>Model override</span>
+          <span>Recommended model</span>
+          <select id="modelPreset"></select>
+        </label>
+        <label class="field">
+          <span>Custom model override</span>
           <input id="model" type="text" placeholder="Leave blank to use backend default">
         </label>
         <label class="field">

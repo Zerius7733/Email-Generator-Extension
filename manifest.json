@@ -5,6 +5,7 @@
   "description": "Capture job pages, extract details, retrieve resume context, and draft tailored application emails.",
   "permissions": [
     "activeTab",
+    "offscreen",
     "storage",
     "tabs",
     "scripting"

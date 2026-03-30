@@ -3,8 +3,14 @@ export const STORAGE_KEYS = {
   profileText: "profileText",
   lastCapture: "lastCapture",
   lastDraft: "lastDraft",
-  popupState: "popupState"
+  draftJob: "draftJob",
+  popupState: "popupState",
+  optionsDraft: "optionsDraft"
 };
+
+export const DRAFT_REQUEST_TIMEOUT_MS = 45000;
+export const STALE_DRAFT_JOB_MS = 60000;
+export const BACKEND_HEALTH_TIMEOUT_MS = 3000;
 
 export const DEFAULT_PROFILE = `Yibin is a Computer Engineering student at NTU focused on software development and AI.
 
@@ -24,20 +30,34 @@ Strengths:
 export const DEFAULT_SETTINGS = {
   applicantName: "Yibin",
   applicantEmail: "",
+  productionProjectName: "",
+  productionLink: "",
   targetEmail: "",
-  tone: "professional and concise",
+  tone: "formal, natural, project-focused, and concise",
   provider: "openai",
   backendUrl: "http://127.0.0.1:8787",
   model: "",
   maxProfileChunks: 4
 };
 
+function getStorageArea() {
+  const storageArea = globalThis.chrome?.storage?.local;
+  if (!storageArea) {
+    throw new Error("Extension storage is unavailable. Reload the extension and try again.");
+  }
+  return storageArea;
+}
+
 export async function getFromStorage(keys) {
-  return chrome.storage.local.get(keys);
+  return getStorageArea().get(keys);
 }
 
 export async function setInStorage(values) {
-  return chrome.storage.local.set(values);
+  return getStorageArea().set(values);
+}
+
+export async function removeFromStorage(keys) {
+  return getStorageArea().remove(keys);
 }
 
 export async function ensureDefaults() {
