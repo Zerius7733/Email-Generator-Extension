@@ -295,6 +295,7 @@ function buildDraftPrompt({ capture, retrievedProfile, settings }) {
   };
 
   const relevantProfileText = trimText(settings.fullProfileText || "", 2200);
+  const { asksForLink } = analyzeJobLinkRequirement(capture);
 
   return [
     "Write a targeted job application email draft.",
@@ -303,11 +304,12 @@ function buildDraftPrompt({ capture, retrievedProfile, settings }) {
     "Keep the tone professional, warm, specific, and concise.",
     "The email should sound like a real candidate wrote it, not a generic template.",
     "Prefer this paragraph structure:",
-    "1. Greeting and one short opening paragraph stating interest in the role and company.",
+    "1. Greeting and one short opening paragraph stating interest in the role and company. Mention that the applicant is a penultimate student.",
     "2. One concrete project paragraph focused on the strongest relevant project or hackathon work.",
-    "3. One paragraph on technical experience gained from those projects, such as backend systems, APIs, deployment, data workflows, or full-stack implementation.",
-    "4. One short paragraph explaining why that experience makes the applicant a good fit for the role.",
-    "5. One brief closing paragraph mentioning the resume and openness to discuss further.",
+    "3. Briefly mention other relevant projects if and only if relevant.",
+    "4. One paragraph on technical experience gained from those projects, such as backend systems, APIs, deployment, data workflows, or full-stack implementation.",
+    "5. One short paragraph explaining why that experience makes the applicant a good fit for the role.",
+    "6. One brief closing paragraph mentioning the resume and openness to discuss further.",
     "Prioritize concrete project experience over broad lists of coursework, tools, or generic strengths unless the job explicitly asks for them.",
     "Mention only projects, technical work, and experience that are directly relevant to the role.",
     "For each project or experience mentioned, make the relevance clear by connecting it to the job's responsibilities, domain, or required skills.",
@@ -316,10 +318,9 @@ function buildDraftPrompt({ capture, retrievedProfile, settings }) {
     "Avoid stiff phrases such as 'Beyond coursework' or long laundry lists of technologies unless needed for role fit.",
     "Prefer short, readable paragraphs instead of dense blocks.",
     "Prefer one standout project over listing many smaller projects.",
-    "If a relevant deployed project exists, mention that it is live in production and place the link on its own line immediately after the sentence introducing the project.",
+    "Only mention a deployed project or include a project link when it is directly relevant to the role and supported by the resume/profile context, or when the job details explicitly ask for a live app, portfolio, website, GitHub, or project link.",
+    "If you include a relevant deployed project link, place the link on its own line immediately after the sentence introducing the project.",
     "If helpful and factual, a short parenthetical note after the link may suggest how to access or test the platform.",
-    "When a live product, deployed app, portfolio, or project link would strengthen the email, integrate the applicant production link naturally into the same paragraph as the project mention instead of adding a detached standalone sentence.",
-    "If the job details explicitly ask for a live app, production URL, portfolio, or project link in the response email, make sure the applicant production link is included naturally in the body.",
     "Use a natural salutation like 'Dear <name>,' when a person is known, otherwise use the captured recruiter/team reference if available.",
     "Use sign-offs like 'Yours sincerely,' or 'Best regards,' based on the overall tone.",
     "Do not include the applicant email address in the sign-off or anywhere in the email body unless the job instructions explicitly require it.",
@@ -328,7 +329,7 @@ function buildDraftPrompt({ capture, retrievedProfile, settings }) {
     "",
     "I am writing to express my interest in the [Role] role at [Company]. I am currently a [Year/Discipline] student at [University], with experience building and deploying end-to-end applications.",
     "",
-    "Recently, I worked on [Project], where [brief achievement or context]. We developed and deployed [Project], a platform that [brief description]:",
+    "Recently, I worked on [Project], where [brief achievement or context]. We developed [Project], a platform that [brief description]:",
     "[Link]",
     "",
     "(Optional short access note if factual.)",
@@ -347,7 +348,9 @@ function buildDraftPrompt({ capture, retrievedProfile, settings }) {
     `Applicant email: ${settings.applicantEmail || "not provided"}`,
     `Applicant production project name: ${settings.productionProjectName || "not provided"}`,
     `Applicant production link: ${settings.productionLink || "not provided"}`,
-    "If both a production project name and production link are provided, treat the link as belonging to that project and refer to them together naturally in the email.",
+    asksForLink
+      ? "The job details appear to request a live app, portfolio, website, GitHub, or project link. If the provided production project is relevant to the role, include it naturally and treat the link as belonging to that project."
+      : "Do not mention the provided production project or production link unless that specific project is directly relevant to the role and supported by the resume/profile context.",
     "",
     "Job details JSON:",
     JSON.stringify(structuredJob, null, 2),
@@ -376,6 +379,23 @@ function normalizeProvider(provider) {
   return "openai";
 }
 
+function analyzeJobLinkRequirement(capture) {
+  const requirementText = [
+    capture?.summary || "",
+    ...(Array.isArray(capture?.keyDetails) ? capture.keyDetails : []),
+    capture?.extractedText || ""
+  ]
+    .join("\n")
+    .toLowerCase();
+
+  return {
+    requirementText,
+    asksForLink: /(portfolio|project link|project links|github|live app|deployed|production link|website|response email)/i.test(
+      requirementText
+    )
+  };
+}
+
 function ensureProductionLinkInDraft({ draft, capture, settings }) {
   const productionLink = normalizeWhitespace(settings.productionLink || "");
   const productionProjectName = normalizeWhitespace(settings.productionProjectName || "");
@@ -388,17 +408,10 @@ function ensureProductionLinkInDraft({ draft, capture, settings }) {
     return draft;
   }
 
-  const requirementText = [
-    capture?.summary || "",
-    ...(Array.isArray(capture?.keyDetails) ? capture.keyDetails : []),
-    capture?.extractedText || ""
-  ]
-    .join("\n")
-    .toLowerCase();
-
-  const asksForLink = /(portfolio|project link|project links|github|live app|deployed|production link|website|response email)/i.test(
-    requirementText
-  );
+  const { asksForLink } = analyzeJobLinkRequirement(capture);
+  if (!asksForLink) {
+    return draft;
+  }
 
   const linkedProject = productionProjectName
     ? `${productionProjectName}, which can be viewed here: ${productionLink}`
@@ -653,7 +666,15 @@ async function fetchWithTimeout(url, options, timeoutMs, providerName) {
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error(`${providerName} request timed out after ${Math.round(timeoutMs / 1000)} seconds.`);
     }
-    throw error;
+
+    const causeMessage =
+      error instanceof Error && error.cause && typeof error.cause === "object" && "message" in error.cause
+        ? String(error.cause.message)
+        : error instanceof Error
+          ? error.message
+          : String(error);
+
+    throw new Error(`${providerName} network request failed: ${causeMessage}`);
   } finally {
     clearTimeout(timer);
   }
